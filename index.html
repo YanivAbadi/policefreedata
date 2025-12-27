@@ -20,7 +20,7 @@
       margin-bottom: 20px;
       display: grid;
       gap: 10px;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       align-items: end;
     }
     label {
@@ -28,7 +28,7 @@
       font-weight: bold;
       margin-bottom: 4px;
     }
-    select, button {
+    select, button, input[type="text"] {
       width: 100%;
       padding: 6px 8px;
       border-radius: 4px;
@@ -63,17 +63,36 @@
     tr:nth-child(even) {
       background: #fafafa;
     }
+    #summaryContainer {
+      margin-bottom: 20px;
+      background: #ffffff;
+      padding: 10px 15px 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+    }
+    #summaryContainer h2 {
+      margin-top: 0;
+      margin-bottom: 4px;
+      font-size: 1rem;
+    }
+    #summaryStatus {
+      margin: 4px 0 10px;
+      font-size: 0.85rem;
+      color: #555;
+    }
+    #summaryTable {
+      box-shadow: none;
+    }
   </style>
 </head>
 <body>
   <h1>נתוני פשיעה לפי יישוב, שנה וסוג עבירה</h1>
-  <p>בחר יישוב, שנה ועבירה כדי לראות את הרשומות הרלוונטיות ממאגר המידע המשטרתי.</p>
+  <p>בחר יישוב, שנה/שנים ועבירה כדי לראות את הרשומות הרלוונטיות ממאגר המידע המשטרתי.</p>
 
   <div class="filters">
     <div>
-      <label for="yearSelect">שנה</label>
-      <select id="yearSelect">
-        <option value="">— בחר שנה —</option>
+      <label for="yearSelect">שנה (ניתן לבחור כמה)</label>
+      <select id="yearSelect" multiple size="3">
         <option value="2023">2023</option>
         <option value="2024">2024</option>
         <option value="2025">2025</option>
@@ -81,7 +100,12 @@
     </div>
 
     <div>
-      <label for="citySelect">יישוב</label>
+      <label for="citySearch">חיפוש יישוב</label>
+      <input id="citySearch" type="text" placeholder="התחל להקליד שם יישוב..." />
+    </div>
+
+    <div>
+      <label for="citySelect">יישוב מהרשימה</label>
       <select id="citySelect" disabled>
         <option value="">— בחר שנה קודם —</option>
       </select>
@@ -107,6 +131,22 @@
   </div>
 
   <div id="status">ממתין לבחירת שנה...</div>
+
+  <div id="summaryContainer">
+    <h2>סיכום העבירות המוצגות</h2>
+    <p id="summaryStatus">לא הוצגו עדיין נתונים.</p>
+    <table id="summaryTable">
+      <thead>
+        <tr>
+          <th>שנה</th>
+          <th>רבעון</th>
+          <th>קבוצת עבירה</th>
+          <th>מספר רשומות</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
 
   <table id="resultsTable">
     <thead>
@@ -135,6 +175,7 @@
     const CRIMES_RESOURCE_ID = "b53b64f8-57ed-4213-9191-a7401c0cf436";
 
     const yearSelect       = document.getElementById("yearSelect");
+    const citySearchInput  = document.getElementById("citySearch");
     const citySelect       = document.getElementById("citySelect");
     const crimeGroupSelect = document.getElementById("crimeGroupSelect");
     const crimeTypeSelect  = document.getElementById("crimeTypeSelect");
@@ -142,9 +183,17 @@
     const statusDiv        = document.getElementById("status");
     const resultsTableBody = document.querySelector("#resultsTable tbody");
 
+    const summaryStatus    = document.getElementById("summaryStatus");
+    const summaryTableBody = document.querySelector("#summaryTable tbody");
+
     const cache = {
       crimesMeta: null,
-      yearData: {}
+      yearData: {}  // רשומות גולמיות לפי שנה (לצורך יישובים)
+    };
+
+    const citiesState = {
+      years: [],
+      cities: []
     };
 
     async function fetchFromDataGov(resourceId, extraParams = {}) {
@@ -178,6 +227,11 @@
       resultsTableBody.innerHTML = "";
     }
 
+    function clearSummary() {
+      summaryStatus.textContent = "לא הוצגו עדיין נתונים.";
+      summaryTableBody.innerHTML = "";
+    }
+
     function fillSelectOptions(selectEl, values, { includeEmpty = true, emptyText = "— כולם —" } = {}) {
       selectEl.innerHTML = "";
       if (includeEmpty) {
@@ -194,6 +248,12 @@
       });
     }
 
+    function getSelectedYears() {
+      return Array.from(yearSelect.selectedOptions)
+        .map(o => o.value)
+        .filter(Boolean);
+    }
+
     async function loadCrimesMeta() {
       if (cache.crimesMeta) return cache.crimesMeta;
 
@@ -204,7 +264,7 @@
       const groups = [...new Set(records.map(r => r.StatisticCrimeGroupName).filter(Boolean))].sort();
       fillSelectOptions(crimeGroupSelect, groups, { includeEmpty: true, emptyText: "— כל הקבוצות —" });
 
-      setStatus("רשימת העבירות נטענה. בחר שנה ויישוב.");
+      setStatus("רשימת העבירות נטענה. בחר שנה/שנים ויישוב.");
       return records;
     }
 
@@ -234,35 +294,80 @@
       updateCrimeTypesForGroup(groupName);
     });
 
-    async function loadCitiesForYear(year) {
-      const resourceId = YEAR_RESOURCE_MAP[year];
-      if (!resourceId) {
-        setStatus("לא נמצא resource_id עבור השנה הזאת.");
-        return;
-      }
+    async function loadCitiesForYears(years) {
+      citiesState.years = years;
+      citiesState.cities = [];
+      citySearchInput.value = "";
+      citySelect.disabled = true;
+      citySelect.innerHTML = '<option value="">— טוען יישובים... —</option>';
 
-      setStatus(`טוען יישובים לשנת ${year}...`);
-
-      const records = await fetchFromDataGov(resourceId, { limit: 5000 });
-
-      const cities = [...new Set(records.map(r => r.Yeshuv).filter(Boolean))].sort();
-      fillSelectOptions(citySelect, cities, { includeEmpty: true, emptyText: "— כל היישובים —" });
-      citySelect.disabled = false;
-
-      setStatus(`נטענו ${cities.length} יישובים לשנת ${year}. בחר יישוב ועבירה ולחץ חפש.`);
-    }
-
-    yearSelect.addEventListener("change", async () => {
-      const year = yearSelect.value;
-      clearTable();
-      if (!year) {
+      if (!years.length) {
         citySelect.disabled = true;
         citySelect.innerHTML = '<option value="">— בחר שנה קודם —</option>';
         setStatus("ממתין לבחירת שנה...");
         return;
       }
+
+      setStatus(`טוען יישובים עבור השנים שנבחרו...`);
+
+      const allCitiesSet = new Set();
+
+      for (const year of years) {
+        const resourceId = YEAR_RESOURCE_MAP[year];
+        if (!resourceId) continue;
+
+        let records;
+        if (cache.yearData[year]) {
+          records = cache.yearData[year];
+        } else {
+          records = await fetchFromDataGov(resourceId, { limit: 5000 });
+          cache.yearData[year] = records;
+        }
+
+        records.forEach(r => {
+          if (r.Yeshuv) {
+            allCitiesSet.add(r.Yeshuv);
+          }
+        });
+      }
+
+      const cities = [...allCitiesSet].sort();
+      citiesState.cities = cities;
+
+      if (!cities.length) {
+        citySelect.disabled = true;
+        citySelect.innerHTML = '<option value="">— לא נמצאו יישובים —</option>';
+        setStatus("לא נמצאו יישובים עבור השנים שנבחרו.");
+        return;
+      }
+
+      fillSelectOptions(citySelect, cities, { includeEmpty: true, emptyText: "— כל היישובים —" });
+      citySelect.disabled = false;
+
+      setStatus(`נטענו ${cities.length} יישובים עבור השנים שנבחרו. בחר יישוב ועבירה ולחץ חפש.`);
+    }
+
+    function filterCitiesBySearch() {
+      const query = citySearchInput.value.trim().toLowerCase();
+      const cities = citiesState.cities || [];
+
+      let filtered = cities;
+      if (query) {
+        filtered = cities.filter(c => c.toLowerCase().includes(query));
+      }
+
+      fillSelectOptions(citySelect, filtered, { includeEmpty: true, emptyText: "— כל היישובים —" });
+      citySelect.disabled = filtered.length === 0;
+    }
+
+    citySearchInput.addEventListener("input", filterCitiesBySearch);
+
+    yearSelect.addEventListener("change", async () => {
+      const years = getSelectedYears();
+      clearTable();
+      clearSummary();
       try {
-        await loadCitiesForYear(year);
+        await loadCitiesForYears(years);
       } catch (err) {
         console.error(err);
         setStatus("שגיאה בטעינת היישובים. בדוק חיבור לרשת או נסה שוב מאוחר יותר.");
@@ -271,15 +376,11 @@
 
     async function search() {
       clearTable();
-      const year = yearSelect.value;
-      if (!year) {
-        setStatus("יש לבחור שנה לפני החיפוש.");
-        return;
-      }
+      clearSummary();
 
-      const resourceId = YEAR_RESOURCE_MAP[year];
-      if (!resourceId) {
-        setStatus("אין API מוגדר לשנה הזאת.");
+      const years = getSelectedYears();
+      if (!years.length) {
+        setStatus("יש לבחור לפחות שנה אחת לפני החיפוש.");
         return;
       }
 
@@ -287,26 +388,35 @@
       const groupName  = crimeGroupSelect.value;
       const typeName   = crimeTypeSelect.value;
 
-      const filters = {};
-      if (city)      filters.Yeshuv        = city;
-      if (groupName) filters.StatisticGroup = groupName;
-      if (typeName)  filters.StatisticType  = typeName;
-      filters.Year = Number(year);
+      const baseFilters = {};
+      if (city)      baseFilters.Yeshuv         = city;
+      if (groupName) baseFilters.StatisticGroup = groupName;
+      if (typeName)  baseFilters.StatisticType  = typeName;
 
-      setStatus("מחפש נתונים במאגר...");
+      const allRecords = [];
+      setStatus("מחפש נתונים במאגר עבור כל השנים הנבחרות...");
 
-      try {
-        const records = await fetchFromDataGov(resourceId, {
-          limit: 5000,
-          filters
-        });
+      for (const year of years) {
+        const resourceId = YEAR_RESOURCE_MAP[year];
+        if (!resourceId) continue;
 
-        setStatus(`נמצאו ${records.length} רשומות לפי הסינון שבחרת.`);
-        renderResults(records);
-      } catch (err) {
-        console.error(err);
-        setStatus("שגיאה בעת החיפוש ב־API. בדוק חיבור לרשת או נסה שוב.");
+        const filters = { ...baseFilters };
+        // אפשר להשאיר את ה-Year בשדה עצמו מהמאגר; אין צורך לסנן עליו כאן
+
+        try {
+          const records = await fetchFromDataGov(resourceId, {
+            limit: 5000,
+            filters
+          });
+          allRecords.push(...records);
+        } catch (err) {
+          console.error("שגיאה עבור שנה", year, err);
+        }
       }
+
+      setStatus(`נמצאו ${allRecords.length} רשומות לפי הסינון שבחרת.`);
+      renderResults(allRecords);
+      renderSummary(allRecords);
     }
 
     function renderResults(records) {
@@ -314,11 +424,11 @@
       records.forEach(r => {
         const tr = document.createElement("tr");
 
-        const yearTd    = document.createElement("td");
-        const quarterTd = document.createElement("td");
-        const cityTd    = document.createElement("td");
-        const groupTd   = document.createElement("td");
-        const typeTd    = document.createElement("td");
+        const yearTd     = document.createElement("td");
+        const quarterTd  = document.createElement("td");
+        const cityTd     = document.createElement("td");
+        const groupTd    = document.createElement("td");
+        const typeTd     = document.createElement("td");
         const districtTd = document.createElement("td");
         const stationTd  = document.createElement("td");
 
@@ -340,6 +450,59 @@
 
         resultsTableBody.appendChild(tr);
       });
+    }
+
+    function renderSummary(records) {
+      clearSummary();
+
+      if (!records.length) {
+        summaryStatus.textContent = "אין נתונים להצגה לפי הסינון הנוכחי.";
+        return;
+      }
+
+      const agg = {};
+      records.forEach(r => {
+        const year    = r.Year ?? "";
+        const quarter = r.Quarter ?? "";
+        const group   = r.StatisticGroup ?? "";
+
+        const key = year + "|" + quarter + "|" + group;
+        if (!agg[key]) {
+          agg[key] = { year, quarter, group, count: 0 };
+        }
+        agg[key].count++;
+      });
+
+      const rows = Object.values(agg);
+
+      rows.sort((a, b) => {
+        if (a.year !== b.year) return (a.year || 0) - (b.year || 0);
+        if (a.quarter !== b.quarter) return (a.quarter || 0) - (b.quarter || 0);
+        return (a.group || "").localeCompare(b.group || "", "he");
+      });
+
+      rows.forEach(row => {
+        const tr = document.createElement("tr");
+
+        const yearTd = document.createElement("td");
+        const qTd    = document.createElement("td");
+        const gTd    = document.createElement("td");
+        const cTd    = document.createElement("td");
+
+        yearTd.textContent = row.year;
+        qTd.textContent    = row.quarter;
+        gTd.textContent    = row.group;
+        cTd.textContent    = row.count;
+
+        tr.appendChild(yearTd);
+        tr.appendChild(qTd);
+        tr.appendChild(gTd);
+        tr.appendChild(cTd);
+
+        summaryTableBody.appendChild(tr);
+      });
+
+      summaryStatus.textContent = "סיכום לפי שנה, רבעון וקבוצת עבירה (מספר רשומות בכל שילוב).";
     }
 
     searchButton.addEventListener("click", () => {
