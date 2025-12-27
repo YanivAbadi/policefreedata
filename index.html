@@ -21,7 +21,7 @@
       display: grid;
       gap: 10px;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      align-items: end;
+      align-items: start;
     }
     label {
       display: block;
@@ -83,6 +83,42 @@
     #summaryTable {
       box-shadow: none;
     }
+    .table-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .table-header-row h2,
+    .table-header-row h3 {
+      margin: 0;
+    }
+    .download-btn {
+      width: auto;
+      padding-inline: 10px;
+      font-size: 0.8rem;
+      white-space: nowrap;
+    }
+    .years-checkboxes {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      background: #fafafa;
+    }
+    .years-checkboxes label {
+      font-weight: normal;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 0;
+      font-size: 0.9rem;
+    }
+    .city-block input[type="text"] {
+      margin-bottom: 6px;
+    }
   </style>
 </head>
 <body>
@@ -91,22 +127,18 @@
 
   <div class="filters">
     <div>
-      <label for="yearSelect">שנה (ניתן לבחור כמה)</label>
-      <select id="yearSelect" multiple size="3">
-        <option value="2023">2023</option>
-        <option value="2024">2024</option>
-        <option value="2025">2025</option>
-      </select>
+      <label>שנה (ניתן לבחור כמה)</label>
+      <div class="years-checkboxes">
+        <label><input type="checkbox" class="yearCheckbox" value="2023"> 2023</label>
+        <label><input type="checkbox" class="yearCheckbox" value="2024"> 2024</label>
+        <label><input type="checkbox" class="yearCheckbox" value="2025"> 2025</label>
+      </div>
     </div>
 
-    <div>
-      <label for="citySearch">חיפוש יישוב</label>
-      <input id="citySearch" type="text" placeholder="התחל להקליד שם יישוב..." />
-    </div>
-
-    <div>
-      <label for="citySelect">יישוב מהרשימה</label>
-      <select id="citySelect" disabled>
+    <div class="city-block">
+      <label>יישוב (חיפוש בתוך הרשימה)</label>
+      <input id="citySearch" type="text" placeholder="התחל להקליד לסינון הרשימה..." />
+      <select id="citySelect" size="8" disabled>
         <option value="">— בחר שנה קודם —</option>
       </select>
     </div>
@@ -125,7 +157,7 @@
       </select>
     </div>
 
-    <div>
+    <div style="align-self: end;">
       <button id="searchButton">חפש</button>
     </div>
   </div>
@@ -133,7 +165,10 @@
   <div id="status">ממתין לבחירת שנה...</div>
 
   <div id="summaryContainer">
-    <h2>סיכום העבירות המוצגות</h2>
+    <div class="table-header-row">
+      <h2>סיכום העבירות המוצגות</h2>
+      <button id="downloadSummaryBtn" class="download-btn" disabled>הורד סיכום לאקסל</button>
+    </div>
     <p id="summaryStatus">לא הוצגו עדיין נתונים.</p>
     <table id="summaryTable">
       <thead>
@@ -148,6 +183,10 @@
     </table>
   </div>
 
+  <div class="table-header-row">
+    <h3>רשימת הרשומות המלאה</h3>
+    <button id="downloadResultsBtn" class="download-btn" disabled>הורד נתונים לאקסל</button>
+  </div>
   <table id="resultsTable">
     <thead>
       <tr>
@@ -174,7 +213,7 @@
 
     const CRIMES_RESOURCE_ID = "b53b64f8-57ed-4213-9191-a7401c0cf436";
 
-    const yearSelect       = document.getElementById("yearSelect");
+    const yearCheckboxes   = document.querySelectorAll(".yearCheckbox");
     const citySearchInput  = document.getElementById("citySearch");
     const citySelect       = document.getElementById("citySelect");
     const crimeGroupSelect = document.getElementById("crimeGroupSelect");
@@ -185,6 +224,9 @@
 
     const summaryStatus    = document.getElementById("summaryStatus");
     const summaryTableBody = document.querySelector("#summaryTable tbody");
+
+    const downloadSummaryBtn = document.getElementById("downloadSummaryBtn");
+    const downloadResultsBtn = document.getElementById("downloadResultsBtn");
 
     const cache = {
       crimesMeta: null,
@@ -225,11 +267,13 @@
 
     function clearTable() {
       resultsTableBody.innerHTML = "";
+      downloadResultsBtn.disabled = true;
     }
 
     function clearSummary() {
       summaryStatus.textContent = "לא הוצגו עדיין נתונים.";
       summaryTableBody.innerHTML = "";
+      downloadSummaryBtn.disabled = true;
     }
 
     function fillSelectOptions(selectEl, values, { includeEmpty = true, emptyText = "— כולם —" } = {}) {
@@ -249,9 +293,9 @@
     }
 
     function getSelectedYears() {
-      return Array.from(yearSelect.selectedOptions)
-        .map(o => o.value)
-        .filter(Boolean);
+      return Array.from(yearCheckboxes)
+        .filter(cb => cb.checked)
+        .map(cb => cb.value);
     }
 
     async function loadCrimesMeta() {
@@ -344,7 +388,7 @@
       fillSelectOptions(citySelect, cities, { includeEmpty: true, emptyText: "— כל היישובים —" });
       citySelect.disabled = false;
 
-      setStatus(`נטענו ${cities.length} יישובים עבור השנים שנבחרו. בחר יישוב ועבירה ולחץ חפש.`);
+      setStatus(`נטענו ${cities.length} יישובים עבור השנים שנבחרו. סנן ברשימה, בחר יישוב ועבירה ולחץ חפש.`);
     }
 
     function filterCitiesBySearch() {
@@ -362,16 +406,18 @@
 
     citySearchInput.addEventListener("input", filterCitiesBySearch);
 
-    yearSelect.addEventListener("change", async () => {
-      const years = getSelectedYears();
-      clearTable();
-      clearSummary();
-      try {
-        await loadCitiesForYears(years);
-      } catch (err) {
-        console.error(err);
-        setStatus("שגיאה בטעינת היישובים. בדוק חיבור לרשת או נסה שוב מאוחר יותר.");
-      }
+    yearCheckboxes.forEach(cb => {
+      cb.addEventListener("change", async () => {
+        const years = getSelectedYears();
+        clearTable();
+        clearSummary();
+        try {
+          await loadCitiesForYears(years);
+        } catch (err) {
+          console.error(err);
+          setStatus("שגיאה בטעינת היישובים. בדוק חיבור לרשת או נסה שוב מאוחר יותר.");
+        }
+      });
     });
 
     async function search() {
@@ -401,8 +447,6 @@
         if (!resourceId) continue;
 
         const filters = { ...baseFilters };
-        // אפשר להשאיר את ה-Year בשדה עצמו מהמאגר; אין צורך לסנן עליו כאן
-
         try {
           const records = await fetchFromDataGov(resourceId, {
             limit: 5000,
@@ -421,6 +465,8 @@
 
     function renderResults(records) {
       clearTable();
+      if (!records.length) return;
+
       records.forEach(r => {
         const tr = document.createElement("tr");
 
@@ -450,6 +496,8 @@
 
         resultsTableBody.appendChild(tr);
       });
+
+      downloadResultsBtn.disabled = false;
     }
 
     function renderSummary(records) {
@@ -503,7 +551,45 @@
       });
 
       summaryStatus.textContent = "סיכום לפי שנה, רבעון וקבוצת עבירה (מספר רשומות בכל שילוב).";
+      downloadSummaryBtn.disabled = false;
     }
+
+    function tableToCSV(tableEl) {
+      const rows = Array.from(tableEl.querySelectorAll("tr"));
+      const csvRows = rows.map(row => {
+        const cells = Array.from(row.querySelectorAll("th,td"));
+        return cells.map(cell => {
+          let text = cell.textContent.replace(/"/g, '""');
+          if (text.search(/("|,|\n)/g) >= 0) {
+            text = '"' + text + '"';
+          }
+          return text;
+        }).join(",");
+      });
+      return csvRows.join("\n");
+    }
+
+    function downloadCSV(csv, filename) {
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    downloadSummaryBtn.addEventListener("click", () => {
+      const csv = tableToCSV(document.getElementById("summaryTable"));
+      downloadCSV(csv, "crime_summary.csv");
+    });
+
+    downloadResultsBtn.addEventListener("click", () => {
+      const csv = tableToCSV(document.getElementById("resultsTable"));
+      downloadCSV(csv, "crime_records.csv");
+    });
 
     searchButton.addEventListener("click", () => {
       search();
