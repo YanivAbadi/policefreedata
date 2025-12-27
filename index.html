@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>מערכת צפייה בנתוני פשיעה לפי יישוב</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f5f5f5;
+    }
+    h1 {
+      margin-bottom: 0.5rem;
+    }
+    .filters {
+      background: #ffffff;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      align-items: end;
+    }
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    select, button {
+      width: 100%;
+      padding: 6px 8px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      box-sizing: border-box;
+    }
+    button {
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #status {
+      margin-bottom: 10px;
+      font-size: 0.9rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #ffffff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    th, td {
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+      text-align: right;
+      font-size: 0.9rem;
+    }
+    th {
+      background: #fafafa;
+    }
+    tr:nth-child(even) {
+      background: #fafafa;
+    }
+  </style>
+</head>
+<body>
+  <h1>נתוני פשיעה לפי יישוב, שנה וסוג עבירה</h1>
+  <p>בחר יישוב, שנה ועבירה כדי לראות את הרשומות הרלוונטיות ממאגר המידע המשטרתי.</p>
+
+  <div class="filters">
+    <div>
+      <label for="yearSelect">שנה</label>
+      <select id="yearSelect">
+        <option value="">— בחר שנה —</option>
+        <option value="2023">2023</option>
+        <option value="2024">2024</option>
+        <option value="2025">2025</option>
+      </select>
+    </div>
+
+    <div>
+      <label for="citySelect">יישוב</label>
+      <select id="citySelect" disabled>
+        <option value="">— בחר שנה קודם —</option>
+      </select>
+    </div>
+
+    <div>
+      <label for="crimeGroupSelect">קבוצת עבירה</label>
+      <select id="crimeGroupSelect">
+        <option value="">— כל הקבוצות —</option>
+      </select>
+    </div>
+
+    <div>
+      <label for="crimeTypeSelect">סוג עבירה</label>
+      <select id="crimeTypeSelect">
+        <option value="">— כל הסוגים —</option>
+      </select>
+    </div>
+
+    <div>
+      <button id="searchButton">חפש</button>
+    </div>
+  </div>
+
+  <div id="status">ממתין לבחירת שנה...</div>
+
+  <table id="resultsTable">
+    <thead>
+      <tr>
+        <th>שנה</th>
+        <th>רבעון</th>
+        <th>יישוב</th>
+        <th>קבוצת עבירה</th>
+        <th>סוג עבירה</th>
+        <th>מחוז</th>
+        <th>תחנה</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const BASE_URL = "https://data.gov.il/api/3/action/datastore_search";
+
+    const YEAR_RESOURCE_MAP = {
+      2023: "32aacfc9-3524-4fba-a282-3af052380244",
+      2024: "5fc13c50-b6f3-4712-b831-a75e0f91a17e",
+      2025: "e311b6a1-be5a-4a82-8298-f3afbee07b6b",
+    };
+
+    const CRIMES_RESOURCE_ID = "b53b64f8-57ed-4213-9191-a7401c0cf436";
+
+    const yearSelect       = document.getElementById("yearSelect");
+    const citySelect       = document.getElementById("citySelect");
+    const crimeGroupSelect = document.getElementById("crimeGroupSelect");
+    const crimeTypeSelect  = document.getElementById("crimeTypeSelect");
+    const searchButton     = document.getElementById("searchButton");
+    const statusDiv        = document.getElementById("status");
+    const resultsTableBody = document.querySelector("#resultsTable tbody");
+
+    const cache = {
+      crimesMeta: null,
+      yearData: {}
+    };
+
+    async function fetchFromDataGov(resourceId, extraParams = {}) {
+      const params = new URLSearchParams({
+        resource_id: resourceId,
+        limit: extraParams.limit || 5000,
+      });
+
+      if (extraParams.filters) {
+        params.set("filters", JSON.stringify(extraParams.filters));
+      }
+
+      const url = `${BASE_URL}?${params.toString()}`;
+
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error("שגיאה בקריאת ה־API: " + res.status);
+      }
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error("ה־API החזיר תשובה לא תקינה");
+      }
+      return data.result.records;
+    }
+
+    function setStatus(text) {
+      statusDiv.textContent = text;
+    }
+
+    function clearTable() {
+      resultsTableBody.innerHTML = "";
+    }
+
+    function fillSelectOptions(selectEl, values, { includeEmpty = true, emptyText = "— כולם —" } = {}) {
+      selectEl.innerHTML = "";
+      if (includeEmpty) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = emptyText;
+        selectEl.appendChild(opt);
+      }
+      values.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = v;
+        selectEl.appendChild(opt);
+      });
+    }
+
+    async function loadCrimesMeta() {
+      if (cache.crimesMeta) return cache.crimesMeta;
+
+      setStatus("טוען רשימת עבירות (API 3)...");
+      const records = await fetchFromDataGov(CRIMES_RESOURCE_ID, { limit: 5000 });
+      cache.crimesMeta = records;
+
+      const groups = [...new Set(records.map(r => r.StatisticCrimeGroupName).filter(Boolean))].sort();
+      fillSelectOptions(crimeGroupSelect, groups, { includeEmpty: true, emptyText: "— כל הקבוצות —" });
+
+      setStatus("רשימת העבירות נטענה. בחר שנה ויישוב.");
+      return records;
+    }
+
+    function updateCrimeTypesForGroup(groupName) {
+      const records = cache.crimesMeta || [];
+      let types;
+
+      if (!groupName) {
+        types = [...new Set(records.map(r => r.StatisticCrimeTypeName).filter(Boolean))];
+      } else {
+        types = [
+          ...new Set(
+            records
+              .filter(r => r.StatisticCrimeGroupName === groupName)
+              .map(r => r.StatisticCrimeTypeName)
+              .filter(Boolean)
+          )
+        ];
+      }
+
+      types.sort();
+      fillSelectOptions(crimeTypeSelect, types, { includeEmpty: true, emptyText: "— כל הסוגים —" });
+    }
+
+    crimeGroupSelect.addEventListener("change", () => {
+      const groupName = crimeGroupSelect.value;
+      updateCrimeTypesForGroup(groupName);
+    });
+
+    async function loadCitiesForYear(year) {
+      const resourceId = YEAR_RESOURCE_MAP[year];
+      if (!resourceId) {
+        setStatus("לא נמצא resource_id עבור השנה הזאת.");
+        return;
+      }
+
+      setStatus(`טוען יישובים לשנת ${year}...`);
+
+      const records = await fetchFromDataGov(resourceId, { limit: 5000 });
+
+      const cities = [...new Set(records.map(r => r.Yeshuv).filter(Boolean))].sort();
+      fillSelectOptions(citySelect, cities, { includeEmpty: true, emptyText: "— כל היישובים —" });
+      citySelect.disabled = false;
+
+      setStatus(`נטענו ${cities.length} יישובים לשנת ${year}. בחר יישוב ועבירה ולחץ חפש.`);
+    }
+
+    yearSelect.addEventListener("change", async () => {
+      const year = yearSelect.value;
+      clearTable();
+      if (!year) {
+        citySelect.disabled = true;
+        citySelect.innerHTML = '<option value="">— בחר שנה קודם —</option>';
+        setStatus("ממתין לבחירת שנה...");
+        return;
+      }
+      try {
+        await loadCitiesForYear(year);
+      } catch (err) {
+        console.error(err);
+        setStatus("שגיאה בטעינת היישובים. בדוק חיבור לרשת או נסה שוב מאוחר יותר.");
+      }
+    });
+
+    async function search() {
+      clearTable();
+      const year = yearSelect.value;
+      if (!year) {
+        setStatus("יש לבחור שנה לפני החיפוש.");
+        return;
+      }
+
+      const resourceId = YEAR_RESOURCE_MAP[year];
+      if (!resourceId) {
+        setStatus("אין API מוגדר לשנה הזאת.");
+        return;
+      }
+
+      const city       = citySelect.value;
+      const groupName  = crimeGroupSelect.value;
+      const typeName   = crimeTypeSelect.value;
+
+      const filters = {};
+      if (city)      filters.Yeshuv        = city;
+      if (groupName) filters.StatisticGroup = groupName;
+      if (typeName)  filters.StatisticType  = typeName;
+      filters.Year = Number(year);
+
+      setStatus("מחפש נתונים במאגר...");
+
+      try {
+        const records = await fetchFromDataGov(resourceId, {
+          limit: 5000,
+          filters
+        });
+
+        setStatus(`נמצאו ${records.length} רשומות לפי הסינון שבחרת.`);
+        renderResults(records);
+      } catch (err) {
+        console.error(err);
+        setStatus("שגיאה בעת החיפוש ב־API. בדוק חיבור לרשת או נסה שוב.");
+      }
+    }
+
+    function renderResults(records) {
+      clearTable();
+      records.forEach(r => {
+        const tr = document.createElement("tr");
+
+        const yearTd    = document.createElement("td");
+        const quarterTd = document.createElement("td");
+        const cityTd    = document.createElement("td");
+        const groupTd   = document.createElement("td");
+        const typeTd    = document.createElement("td");
+        const districtTd = document.createElement("td");
+        const stationTd  = document.createElement("td");
+
+        yearTd.textContent     = r.Year ?? "";
+        quarterTd.textContent  = r.Quarter ?? "";
+        cityTd.textContent     = r.Yeshuv ?? "";
+        groupTd.textContent    = r.StatisticGroup ?? "";
+        typeTd.textContent     = r.StatisticType ?? "";
+        districtTd.textContent = r.PoliceDistrict ?? "";
+        stationTd.textContent  = r.PoliceStation ?? "";
+
+        tr.appendChild(yearTd);
+        tr.appendChild(quarterTd);
+        tr.appendChild(cityTd);
+        tr.appendChild(groupTd);
+        tr.appendChild(typeTd);
+        tr.appendChild(districtTd);
+        tr.appendChild(stationTd);
+
+        resultsTableBody.appendChild(tr);
+      });
+    }
+
+    searchButton.addEventListener("click", () => {
+      search();
+    });
+
+    (async function init() {
+      try {
+        await loadCrimesMeta();
+      } catch (err) {
+        console.error(err);
+        setStatus("שגיאה בטעינת מטא־דאטה של העבירות (API 3).");
+      }
+    })();
+  </script>
+</body>
+</html>
